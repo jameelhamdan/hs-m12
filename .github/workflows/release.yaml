@@ -17,15 +17,15 @@ jobs:
 
     steps:
     - name: Checkout code
-      uses: actions/checkout@v3
+      uses: actions/checkout@v4
 
-    - name: Set up Python
-      uses: actions/setup-python@v4
-      with:
-        python-version: '3.9'
+    - name: Install Databricks CLI (v2)
+      run: |
+        curl -fsSL https://raw.githubusercontent.com/databricks/setup-cli/main/install.sh | sh
+        echo "$HOME/.databricks/bin" >> $GITHUB_PATH
 
-    - name: Install Databricks CLI
-      run: pip install databricks-cli
+    - name: Verify Databricks CLI
+      run: databricks --version
 
     - name: Configure Databricks CLI
       run: |
