@@ -1,0 +1,38 @@
+name: Deploy UI to Databricks
+
+on:
+  push:
+    branches: [ master ]
+  pull_request:
+    branches: [ master ]
+
+env:
+  DATABRICKS_HOST: ${{ vars.DATABRICKS_HOST }}
+  DATABRICKS_TOKEN: ${{ vars.DATABRICKS_TOKEN }}
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v3
+
+    - name: Set up Python
+      uses: actions/setup-python@v4
+      with:
+        python-version: '3.9'
+
+    - name: Install Databricks CLI
+      run: pip install databricks-cli
+
+    - name: Configure Databricks CLI
+      run: |
+        echo "Configuring Databricks CLI"
+        databricks configure --token --host $DATABRICKS_HOST --token $DATABRICKS_TOKEN
+
+    - name: Deploy App
+      run: |
+        # Example: Deploy notebooks to Databricks workspace
+        databricks workspace import-dir . /Workspace/Shared/M12_LLMOps/nlp_rangers/app
+        databricks apps deploy pdf --source-code-path /Workspace/Shared/M12_LLMOps/nlp_rangers/app
