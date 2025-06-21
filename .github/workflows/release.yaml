@@ -5,6 +5,7 @@ on:
     branches: [ master ]
   pull_request:
     branches: [ master ]
+  workflow_dispatch:
 
 env:
   DATABRICKS_HOST: ${{ vars.DATABRICKS_HOST }}
