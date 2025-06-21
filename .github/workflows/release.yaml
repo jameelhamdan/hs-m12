@@ -34,5 +34,6 @@ jobs:
     - name: Deploy App
       run: |
         # Example: Deploy notebooks to Databricks workspace
-        databricks workspace import-dir . /Workspace/Shared/M12_LLMOps/nlp_rangers/app
+        rsync -av --exclude='.git' . /tmp/databricks_import/
+        databricks workspace import-dir /tmp/databricks_import/ /Workspace/Shared/M12_LLMOps/nlp_rangers/app
         databricks apps deploy pdf --source-code-path /Workspace/Shared/M12_LLMOps/nlp_rangers/app
