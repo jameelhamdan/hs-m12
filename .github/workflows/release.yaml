@@ -35,5 +35,5 @@ jobs:
       run: |
         # Example: Deploy notebooks to Databricks workspace
         rsync -av --exclude='.git' . /tmp/databricks_import/
-        databricks workspace import-dir /tmp/databricks_import/ /Workspace/Shared/M12_LLMOps/nlp_rangers/app
+        databricks workspace import-dir /tmp/databricks_import/ /Workspace/Shared/M12_LLMOps/nlp_rangers/app --overwrite
         databricks apps deploy pdf --source-code-path /Workspace/Shared/M12_LLMOps/nlp_rangers/app
