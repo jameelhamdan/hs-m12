@@ -17,6 +17,7 @@ OUTPUT_PATH = os.path.join(VOLUME_PATH, 'processed')
 ERROR_PATH = os.path.join(VOLUME_PATH, 'errors')
 CHECKPOINT_LOCATION = f"{VOLUME_PATH}/_checkpoints"
 
+
 def setup_tables():
     spark.sql("""
     CREATE TABLE IF NOT EXISTS document (

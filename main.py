@@ -5,10 +5,9 @@ import config
 import time
 import logging
 import fitz  # PyMuPDF
+from datetime import datetime
 
 logger = logging.getLogger(__name__)
-
-current_documents: list[str] = []
 
 
 def extract_text_from_pdf(file) -> str:
@@ -43,6 +42,58 @@ def upload(file) -> str:
     return _id
 
 
+def submit_feedback(text: str, rating: int, comments: str) -> bool:
+    """Submit user feedback to Databricks SQL table"""
+    try:
+        parameter_values = [
+            {"name": "text", "value": text, "type": "STRING"},
+            {"name": "rating", "value": str(rating), "type": "INT"},
+            {"name": "comments", "value": comments, "type": "STRING"},
+            {"name": "created_at", "value": datetime.now().isoformat(), "type": "TIMESTAMP"}
+        ]
+
+        response = requests.post(
+            f"{config.DATABRICKS_URL}/api/2.0/sql/statements/",
+            headers={
+                'Authorization': f'Bearer {config.DATABRICKS_API_TOKEN}',
+                'Content-Type': 'application/json',
+            },
+            json={
+                "statement": "INSERT INTO user_feedback (text, rating, comments, created_at) VALUES (:text, :rating, :comments, :created_at)",
+                "parameters": parameter_values,
+                "warehouse_id": config.get_warehouse_id(),
+            }
+        )
+        response.raise_for_status()
+        logger.info('Sent user feedback successfully!')
+        return True
+    except Exception as e:
+        logger.error(f"Error submitting feedback: {str(e)}", e)
+        return False
+
+
+def feedback_section():
+    """Feedback section using popover dialog"""
+    with st.popover("💬 Provide Feedback"):
+        st.markdown("#### We'd love to hear your feedback!")
+        st.markdown("How was your chat experience?")
+        feedback_text = '\n'.join(st.session_state.current_documents)
+        feedback_text += '\n\n'
+        feedback_text += '\n'.join([m['content'] for m in st.session_state.messages])
+
+        with st.form("feedback_form"):
+            rating = st.slider("Rate your experience (1-5)", 1, 5, 3)
+            comments = st.text_area("Any additional comments? (optional)")
+
+            submitted = st.form_submit_button("Submit")
+
+            if submitted:
+                if submit_feedback(feedback_text, rating, comments):
+                    st.success("Thank you for your feedback!")
+                else:
+                    st.error("Error submitting feedback. Please try again.")
+
+
 def upload_section():
     st.header('Upload a File')
     uploaded_files = st.file_uploader('Choose a file', type=['pdf'], accept_multiple_files=True)
@@ -54,8 +105,8 @@ def upload_section():
                 status_text = st.empty()
 
                 total_files = len(uploaded_files)
-                global current_documents
-                current_documents = []  # Reset current documents
+                # Reset current documents
+                st.session_state.current_documents = []
 
                 for i, file in enumerate(uploaded_files):
                     progress = int((i + 1) / total_files * 100)
@@ -63,7 +114,7 @@ def upload_section():
                     status_text.text(f'Uploading file {i + 1} of {total_files}: {file.name}')
 
                     upload(file)
-                    current_documents.append(extract_text_from_pdf(file))
+                    st.session_state.current_documents.append(extract_text_from_pdf(file))
 
                 progress_bar.progress(100)
                 status_text.text('Upload complete!')
@@ -71,8 +122,7 @@ def upload_section():
 
                 st.success('Files Uploaded Successfully!')
                 # Reset chat when new documents are uploaded
-                if "messages" in st.session_state:
-                    del st.session_state.messages
+                st.session_state.messages = []
 
                 time.sleep(2)
                 progress_bar.empty()
@@ -94,7 +144,7 @@ def query_databricks_model(prompt, chat_history):
         messages = [{"role": m["role"], "content": m["content"]} for m in chat_history]
 
         # Add system message with current documents if they exist
-        if current_documents:
+        if current_documents := st.session_state.current_documents:
             documents_context = "\n\n".join(current_documents)
             system_message = {
                 "role": "system",
@@ -137,17 +187,14 @@ def chat_section():
 
     # Add button to reset chat and documents
     if st.button("Reset Chat & Documents"):
-        global current_documents
-        current_documents = []
-        if "messages" in st.session_state:
-            del st.session_state.messages
+        st.session_state.current_documents = []
+        st.session_state.messages = []
         st.rerun()
 
     # Initialize chat history
-    if "messages" not in st.session_state:
-        st.session_state.messages = []
+    if not st.session_state.messages:
         # Add initial system message if documents exist
-        if current_documents:
+        if current_documents := st.session_state.current_documents:
             documents_context = "\n\n".join(current_documents)
             st.session_state.messages.append({
                 "role": "system",
@@ -158,7 +205,7 @@ def chat_section():
                 answer based on your general knowledge."""
             })
 
-    if "max_messages" not in st.session_state:
+    if not st.session_state.max_messages:
         # Counting both user and assistant messages, so 10 rounds of conversation
         st.session_state.max_messages = 20
 
@@ -211,5 +258,10 @@ def chat_section():
 
 
 if __name__ == '__main__':
+    st.session_state.current_documents = []
+    st.session_state.messages = []
+    st.session_state.max_messages = 20
+
+    feedback_section()
     upload_section()
     chat_section()
