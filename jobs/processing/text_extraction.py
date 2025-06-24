@@ -5,8 +5,9 @@ import shutil
 from datetime import datetime
 import fitz  # PyMuPDF
 from pyspark.sql.functions import lit
-from pyspark.sql.types import StructType, StructField, IntegerType, StringType, TimestampType
+from pyspark.sql.types import StructType, StructField, IntegerType, LongType, StringType, TimestampType, BooleanType
 from pyspark.sql import functions as F
+from langchain.text_splitter import RecursiveCharacterTextSplitter  # databricks-langchain langchain-community langchain databricks-sql-connector
 import logging
 
 logger = logging.getLogger(__name__)
@@ -17,35 +18,63 @@ OUTPUT_PATH = os.path.join(VOLUME_PATH, 'processed')
 ERROR_PATH = os.path.join(VOLUME_PATH, 'errors')
 CHECKPOINT_LOCATION = f"{VOLUME_PATH}/_checkpoints"
 
+# Initialize text splitter for chunking
+text_splitter = RecursiveCharacterTextSplitter(
+    chunk_size=1000,
+    chunk_overlap=200,
+    separators=["\n\n", "\n", ".", "!", "?", ",", " ", ""]
+)
+
 
 def setup_tables():
     spark.sql("""
-    CREATE TABLE IF NOT EXISTS document (
-        id long PRIMARY KEY GENERATED ALWAYS AS IDENTITY,
-        document_uuid STRING,
-        upload_timestamp TIMESTAMP,
-        page_count INT,
-        word_count INT,
-        created_at TIMESTAMP,
-        expires_at TIMESTAMP,
-        text STRING,
-        file_name STRING,
-        file_path STRING
-    )
-    USING DELTA
-    """)
+              CREATE TABLE IF NOT EXISTS document
+              (
+                  id long PRIMARY KEY GENERATED ALWAYS AS IDENTITY,
+                  document_uuid STRING,
+                  upload_timestamp TIMESTAMP,
+                  page_count INT,
+                  word_count INT,
+                  created_at TIMESTAMP,
+                  expires_at TIMESTAMP,
+                  text STRING,
+                  file_name STRING,
+                  file_path STRING
+              )
+                  USING DELTA
+              """)
 
     spark.sql("""
-    CREATE TABLE IF NOT EXISTS document_processing_error (
-        id long PRIMARY KEY GENERATED ALWAYS AS IDENTITY,
-        error_timestamp TIMESTAMP,
-        file_name STRING,
-        file_path STRING,
-        error_message STRING,
-        stack_trace STRING
-    )
-    USING DELTA
-    """)
+              CREATE TABLE IF NOT EXISTS document_processing_error
+              (
+                  id long PRIMARY KEY GENERATED ALWAYS AS IDENTITY,
+                  error_timestamp TIMESTAMP,
+                  file_name STRING,
+                  file_path STRING,
+                  error_message STRING,
+                  stack_trace STRING
+              )
+                  USING DELTA
+              """)
+
+    # Table for storing chunks before embedding
+    spark.sql("""
+              CREATE TABLE IF NOT EXISTS document_chunks_staging
+              (
+                  id long PRIMARY KEY GENERATED ALWAYS AS IDENTITY,
+                  document_id LONG,
+                  chunk_index INT,
+                  chunk_text STRING,
+                  chunk_size INT,
+                  created_at TIMESTAMP,
+                  processed_for_embedding BOOLEAN,
+                  FOREIGN KEY ( document_id ) REFERENCES document ( id )
+              )
+                  USING DELTA TBLPROPERTIES
+              (
+                  delta.enableChangeDataFeed = true
+              );
+              """)
 
 
 def ensure_directory_exists(path):
@@ -110,6 +139,83 @@ def get_expiry_date():
     return datetime.now() + timedelta(hours=24)
 
 
+def chunk_document_text(text, document_id):
+    """Chunk document text for later embedding"""
+    try:
+        chunks = text_splitter.split_text(text)
+
+        chunk_data = []
+        for i, chunk in enumerate(chunks):
+            chunk_data.append({
+                "document_id": document_id,
+                "chunk_index": i,
+                "chunk_text": chunk,
+                "chunk_size": len(chunk),
+                "created_at": datetime.now(),
+                "processed_for_embedding": False
+            })
+
+        return chunk_data
+    except Exception as e:
+        logger.error(f"Failed to chunk document {document_id}: {str(e)}")
+        return []
+
+
+def save_chunks_to_staging(chunks_data):
+    """Save chunks to staging table for later embedding"""
+    if not chunks_data:
+        return
+
+    try:
+        # Define schema for chunks
+        chunk_schema = StructType([
+            StructField("document_id", LongType(), False),
+            StructField("chunk_index", IntegerType(), False),
+            StructField("chunk_text", StringType(), False),
+            StructField("chunk_size", IntegerType(), False),
+            StructField("created_at", TimestampType(), False),
+            StructField("processed_for_embedding", BooleanType(), False)
+        ])
+
+        # Convert to rows
+        rows = [(
+            chunk["document_id"],
+            chunk["chunk_index"],
+            chunk["chunk_text"],
+            chunk["chunk_size"],
+            chunk["created_at"],
+            chunk["processed_for_embedding"]
+        ) for chunk in chunks_data]
+
+        # Create DataFrame and save
+        chunks_df = spark.createDataFrame(rows, schema=chunk_schema)
+        chunks_df.write.format("delta").mode("append").saveAsTable("document_chunks_staging")
+
+        print(f"Saved {len(chunks_data)} chunks for document {chunks_data[0]['document_id']}")
+
+    except Exception as e:
+        logger.error(f"Failed to save chunks: {str(e)}")
+
+
+def get_document_id_from_uuid(document_uuid):
+    """Get the auto-generated document ID after insertion"""
+    try:
+        df = spark.sql(f"""
+            SELECT id FROM document 
+            WHERE document_uuid = '{document_uuid}'
+            ORDER BY created_at DESC 
+            LIMIT 1
+        """)
+
+        if df.count() > 0:
+            return df.collect()[0]['id']
+        else:
+            raise Exception(f"Document with UUID {document_uuid} not found")
+    except Exception as e:
+        logger.error(f"Failed to get document ID: {str(e)}")
+        return None
+
+
 def process_pdf_file(file_path):
     """Process a single PDF file and save to Delta table with UUID."""
     start_time = datetime.now()
@@ -157,6 +263,22 @@ def process_pdf_file(file_path):
         # Write to Delta table
         df.write.format("delta").mode("append").saveAsTable("document")
 
+        # Get the auto-generated document ID
+        document_id = get_document_id_from_uuid(document_uuid)
+
+        if document_id:
+            chunks_data = chunk_document_text(raw_text, document_id)
+            save_chunks_to_staging(chunks_data)
+
+            processing_time_sec = int((datetime.now() - start_time).total_seconds())
+            print(f"Successfully processed {file_name}")
+            print(f"  - Document ID: {document_id}")
+            print(f"  - UUID: {document_uuid}")
+            print(f"  - Created {len(chunks_data)} chunks")
+            print(f"  - Processing time: {processing_time_sec}s")
+        else:
+            print(f"Warning: Could not retrieve document ID for {file_name}")
+
         # Move to processed directory after successful processing
         processed_path = move_file(file_path, OUTPUT_PATH)
         print(f"Successfully processed {file_name} (document_id: {document_uuid}, uuid: {document_uuid})")
@@ -165,7 +287,7 @@ def process_pdf_file(file_path):
     except Exception as e:
         logger.error(e)
         # Move to error directory if processing fails
-        error_path = '' # move_file(file_path, ERROR_PATH)
+        error_path = ''  # move_file(file_path, ERROR_PATH)
         error_msg = str(e)
         stack_trace = traceback.format_exc()
 
@@ -202,23 +324,23 @@ def run():
 
     new_files = []
     for root, dirs, files in os.walk(INPUT_PATH):
-        for file in files:
-            if file.lower().endswith('.pdf'):
-                new_files += [os.path.join(root, file)]
+        for file in files: e
+        if file.lower().endswith('.pdf'):
+            new_files += [os.path.join(root, file)]
 
-    if not new_files:
-        print("No new PDF files to process")
-        return
 
-    print(f"Found {len(new_files)} new PDF files to process")
+if not new_files:
+    print("No new PDF files to process")
+    return
 
-    # Process each file
-    for file_path in new_files:
-        try:
-            process_pdf_file(file_path)
-        except Exception as e:
-            # Error already logged in process_pdf_file
-            continue
+print(f"Found {len(new_files)} new PDF files to process")
 
+# Process each file
+for file_path in new_files:
+    try:
+        process_pdf_file(file_path)
+    except Exception as e:
+        # Error already logged in process_pdf_file
+        continue
 
 run()

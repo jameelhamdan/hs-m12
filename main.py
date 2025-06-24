@@ -1,11 +1,11 @@
 import streamlit as st
-import requests
-import uuid
-import config
 import time
 import logging
 import fitz  # PyMuPDF
-from datetime import datetime
+
+from agentic import call_agent
+from backend import submit_feedback, upload
+
 
 logger = logging.getLogger(__name__)
 
@@ -22,54 +22,6 @@ def extract_text_from_pdf(file) -> str:
     except Exception as e:
         logger.error(e)
         raise Exception(f"Failed to extract text from PDF: {str(e)}")
-
-
-def upload(file) -> str:
-    _id = str(uuid.uuid4())
-    file_extension = file.name.split('.')[-1]
-
-    uuid_filename = f'{_id}.{file_extension}'
-    volume_path = f'{config.DATABRICKS_API_UPLOAD_PATH}/{uuid_filename}'
-
-    response = requests.put(
-        f"{config.DATABRICKS_URL}/api/2.0/fs/files/{volume_path}",
-        headers={
-            'Authorization': f'Bearer {config.DATABRICKS_API_TOKEN}',
-        },
-        data=file.getbuffer(),
-    )
-    response.raise_for_status()
-    return _id
-
-
-def submit_feedback(text: str, rating: int, comments: str) -> bool:
-    """Submit user feedback to Databricks SQL table"""
-    try:
-        parameter_values = [
-            {"name": "text", "value": text, "type": "STRING"},
-            {"name": "rating", "value": str(rating), "type": "INT"},
-            {"name": "comments", "value": comments, "type": "STRING"},
-            {"name": "created_at", "value": datetime.now().isoformat(), "type": "TIMESTAMP"}
-        ]
-
-        response = requests.post(
-            f"{config.DATABRICKS_URL}/api/2.0/sql/statements/",
-            headers={
-                'Authorization': f'Bearer {config.DATABRICKS_API_TOKEN}',
-                'Content-Type': 'application/json',
-            },
-            json={
-                "statement": "INSERT INTO user_feedback (text, rating, comments, created_at) VALUES (:text, :rating, :comments, :created_at)",
-                "parameters": parameter_values,
-                "warehouse_id": config.get_warehouse_id(),
-            }
-        )
-        response.raise_for_status()
-        logger.info('Sent user feedback successfully!')
-        return True
-    except Exception as e:
-        logger.error(f"Error submitting feedback: {str(e)}", e)
-        return False
 
 
 def feedback_section():
@@ -137,51 +89,6 @@ def upload_section():
                     status_text.empty()
 
 
-def query_databricks_model(prompt, chat_history):
-    """Function to query your Databricks model"""
-    try:
-        # Prepare the messages in the format your Databricks model expects
-        messages = [{"role": m["role"], "content": m["content"]} for m in chat_history]
-
-        # Add system message with current documents if they exist
-        if current_documents := st.session_state.current_documents:
-            documents_context = "\n\n".join(current_documents)
-            system_message = {
-                "role": "system",
-                "content": f"""You are a helpful assistant. Here are some documents that have been uploaded for context:
-                {documents_context}
-
-                Please use this information when answering questions. If the question is unrelated to these documents, 
-                answer based on your general knowledge."""
-            }
-            messages.insert(0, system_message)
-
-        # Add the new user message
-        messages.append({"role": "user", "content": prompt})
-
-        # Make request to Databricks serving endpoint
-        response = requests.post(
-            f"{config.DATABRICKS_URL}/serving-endpoints/{config.DATABRICKS_MODEL_ENDPOINT}/invocations",
-            headers={
-                'Authorization': f'Bearer {config.DATABRICKS_API_TOKEN}',
-                'Content-Type': 'application/json',
-            },
-            json={
-                "messages": messages,
-                "max_tokens": 1024,
-                "temperature": 0.7
-            }
-        )
-        response.raise_for_status()
-
-        # Parse the response - adjust this based on your model's response format
-        return response.json()["choices"][0]["message"]["content"]
-
-    except Exception as e:
-        logger.error(f"Error querying Databricks model: {str(e)}")
-        return None
-
-
 def chat_section():
     st.header("Chat with AI")
 
@@ -236,7 +143,7 @@ def chat_section():
             with st.chat_message("assistant"):
                 try:
                     # Get response from Databricks model
-                    full_response = query_databricks_model(prompt, st.session_state.messages)
+                    full_response = call_agent(prompt, st.session_state.current_documents, st.session_state.messages)
 
                     if full_response is None:
                         raise Exception("Failed to get response from model")
@@ -258,9 +165,12 @@ def chat_section():
 
 
 if __name__ == '__main__':
-    st.session_state.current_documents = []
-    st.session_state.messages = []
-    st.session_state.max_messages = 20
+    if 'current_documents' not in st.session_state:
+        st.session_state.current_documents = []
+    if 'messages' not in st.session_state:
+        st.session_state.messages = []
+    if 'max_messages' not in st.session_state:
+        st.session_state.max_messages = 20
 
     feedback_section()
     upload_section()

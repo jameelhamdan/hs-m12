@@ -1,6 +1,6 @@
 # databricks_app.yaml
 name: pdf
-description: A Streamlit application for chatting with AI about uploaded documents
+description: An application for chatting with AI about uploaded documents
 version: 1.0.0
 
 # Requirements
@@ -8,6 +8,9 @@ requirements:
   - streamlit==1.45.1
   - requests==2.31.0
   - PyMuPDF==1.26.1
+  - langchain==0.3.26
+  - databricks-langchain==0.5.1
+  - mlflow-skinny==3.1.0
   - python-dotenv==1.1.0
 
 command: [
