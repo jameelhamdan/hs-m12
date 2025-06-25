@@ -135,7 +135,6 @@ def initialize_agent():
     """Initialize the agent after prompts are loaded"""
     global agent_executor
     prompt = get_prompt("agent_system_prompt")
-    print(prompt)
 
     # Define the prompt template for the tool calling agent
     agent_prompt = ChatPromptTemplate.from_messages([
