@@ -32,6 +32,7 @@ Tools available:
 }
 
 def get_prompt(name: str) -> str:
+    mlflow.set_experiment(experiment_id=config.MLFLOW_EXPERIMENT_ID)
     prompt_name = f'prompts:/{config.DATABRICKS_CATALOG}.{config.DATABRICKS_SCHEMA}.{name}@latest'
     prompt = mlflow.genai.load_prompt(prompt_name)
     return prompt.template
