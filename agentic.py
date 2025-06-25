@@ -1,69 +1,69 @@
+import re
 import config
 from langchain.agents import AgentExecutor, Tool, create_tool_calling_agent
 from langchain_core.prompts import ChatPromptTemplate, MessagesPlaceholder
 from langchain_core.messages import AIMessage, HumanMessage
 from databricks_langchain.chat_models import ChatDatabricks
+from prompts import get_prompt
 import logging
-
-
-__all__ = ['call_agent']
 
 
 logger = logging.getLogger(__name__)
 
+__all__ = ['call_agent']
+
+# Chat models configuration
 chat_base_model = ChatDatabricks(
     endpoint=config.DATABRICKS_MODEL_BASE_ENDPOINT,
-    api_token=config.DATABRICKS_API_TOKEN,
+    api_token=config.DATABRICKS_TOKEN,
     max_tokens=1024,
     temperature=0.1
 )
 
 chat_rag_model = ChatDatabricks(
     endpoint=config.DATABRICKS_MODEL_RAG_ENDPOINT,
-    api_token=config.DATABRICKS_API_TOKEN,
+    api_token=config.DATABRICKS_TOKEN,
     max_tokens=1024,
     temperature=0.1
 )
 
-
-def summarize_text(text: str) -> str:
+def retrieve_document(text: str) -> str:
     """Summarize text in the specified language"""
     try:
-        prompt = f"""
-        Please summarize the following text. 
-        Keep the summary concise (3-5 sentences) while preserving key information.
-
-        Text: {text}
-        """
-
+        prompt = get_prompt('retrieve_document').format(text=text)
         response = chat_rag_model.invoke(prompt)
-        # TODO: LOG SUMMARIZE
-        # TODO: CALCULATE BLEU OR OTHER METRIC
         return response.content
     except Exception as e:
         logger.error(f"Error summarizing text: {str(e)}")
         return f"Error generating summary: {str(e)}"
 
 
-def translate_text(text: str, target_language: str) -> str:
+def summarize_text(text: str) -> str:
+    """Summarize text in the specified language"""
+    try:
+        prompt = get_prompt('summarize_text').format(text=text)
+        response = chat_base_model.invoke(prompt)
+        return response.content
+    except Exception as e:
+        logger.error(f"Error summarizing text: {str(e)}")
+        return f"Error generating summary: {str(e)}"
+
+
+def translate_text(text: str, target_language: str = None) -> str:
     """Translate text to the target language"""
     try:
-        prompt = f"""
-        Translate the following text to {target_language} or if not found, by language mentioned by user. 
-        Maintain the original meaning and tone as closely as possible.
-
-        Text: {text}
-        """
-        response = chat_rag_model.invoke(prompt)
-        # TODO: LOG TRANSLATE
-        # TODO: CALCULATE BLEU OR OTHER METRIC
+        prompt = get_prompt('translate_text').format(
+            text=text,
+            target_language=target_language
+        )
+        response = chat_base_model.invoke(prompt)
         return response.content
     except Exception as e:
         logger.error(f"Error translating text: {str(e)}")
         return f"Error translating text: {str(e)}"
 
 
-def summarize_and_translate(text: str, target_language: str) -> str:
+def summarize_and_translate(text: str, target_language: str = None) -> str:
     """Summarize and then translate the text"""
     try:
         summary = summarize_text(text)
@@ -73,56 +73,92 @@ def summarize_and_translate(text: str, target_language: str) -> str:
         return f"Error in summarize_and_translate: {str(e)}"
 
 
+# Define tools with proper parameter schemas
 tools = [
+    Tool(
+        name="RetrieveDocument",
+        func=retrieve_document,
+        description='Useful for searching and retrieving documents by text search',
+        args_schema={
+            "type": "object",
+            "properties": {
+                "text": {"type": "string", "description": "The text to search for documents with"}
+            },
+            "required": ["text"]
+        }
+    ),
     Tool(
         name="Summarize",
         func=summarize_text,
-        description='Useful for summarizing text in various languages. Input should be the text to summarize.'
+        description='Useful for summarizing text in various languages.',
+        args_schema={
+            "type": "object",
+            "properties": {
+                "text": {"type": "string", "description": "The text to summarize"}
+            },
+            "required": ["text"]
+        }
     ),
     Tool(
         name="Translate",
         func=translate_text,
-        description='Useful for translating text to different languages. Input should be a dictionary with "text" and "target_language" keys.'
+        description='Useful for translating text to different languages.',
+        args_schema={
+            "type": "object",
+            "properties": {
+                "text": {"type": "string", "description": "The text to translate"},
+                "target_language": {"type": "string", "description": "Target language code"}
+            },
+            "required": ["text", "target_language"]
+        }
     ),
     Tool(
         name="SummarizeAndTranslate",
         func=summarize_and_translate,
-        description='Useful for first summarizing and then translating text. Input should be a dictionary with "text" and "target_language" keys.'
+        description='Useful for first summarizing and then translating text.',
+        args_schema={
+            "type": "object",
+            "properties": {
+                "text": {"type": "string", "description": "The text to process"},
+                "target_language": {"type": "string", "description": "Target language code"}
+            },
+            "required": ["text", "target_language"]
+        }
     ),
 ]
 
-# Define the prompt template for the tool calling agent
-agent_prompt = ChatPromptTemplate.from_messages([
-    ("system", """You are a helpful AI assistant that can summarize and translate text. 
-You have access to tools that can summarize text, translate text, or do both in sequence.
-Use the tools when appropriate to answer user requests.
+# Initialize the agent (will be done after prompts are loaded)
+agent_executor = None
 
-When you need to use a tool, you will automatically call the appropriate tool with the required parameters.
-When you have the final answer, respond normally with the answer.
 
-Tools available:
-- Summarize: For summarizing text
-- Translate: For translating text to different languages
-- SummarizeAndTranslate: For first summarizing and then translating text"""),
-    MessagesPlaceholder("chat_history", optional=True),
-    ("human", "{input}"),
-    MessagesPlaceholder("agent_scratchpad"),
-])
+def initialize_agent():
+    """Initialize the agent after prompts are loaded"""
+    global agent_executor
+    prompt = get_prompt("agent_system_prompt")
+    print(prompt)
 
-# Create the tool calling agent
-agent = create_tool_calling_agent(
-    llm=chat_rag_model,
-    tools=tools,
-    prompt=agent_prompt,
-)
+    # Define the prompt template for the tool calling agent
+    agent_prompt = ChatPromptTemplate.from_messages([
+        ("system", prompt),
+        MessagesPlaceholder("chat_history", optional=True),
+        ("human", "{input}"),
+        MessagesPlaceholder("agent_scratchpad"),
+    ])
 
-agent_executor = AgentExecutor(
-    agent=agent,
-    tools=tools,
-    verbose=True,
-    handle_parsing_errors=True,
-    return_intermediate_steps=False,
-)
+    # Create the tool calling agent
+    agent = create_tool_calling_agent(
+        llm=chat_rag_model,
+        tools=tools,
+        prompt=agent_prompt,
+    )
+
+    agent_executor = AgentExecutor(
+        agent=agent,
+        tools=tools,
+        verbose=True,
+        handle_parsing_errors=True,
+        return_intermediate_steps=False,
+    )
 
 
 def call_agent(prompt: str, current_documents: list[str] = None, chat_history: list[tuple[str, str]] = None) -> str:
@@ -138,6 +174,9 @@ def call_agent(prompt: str, current_documents: list[str] = None, chat_history: l
         The agent's response
     """
     try:
+        if agent_executor is None:
+            initialize_agent()
+
         # Format chat history for LangChain
         formatted_history = []
         if chat_history:
@@ -156,8 +195,12 @@ def call_agent(prompt: str, current_documents: list[str] = None, chat_history: l
             "input": input_with_context,
             "chat_history": formatted_history,
         })
-        # TODO: CALCULATE RELEVANCE METRIC
-        return response.get("output", "No response generated")
+        output = response.get("output", "No response generated")
+        output = re.sub(r'<think>.*?</think>', '', output, flags=re.DOTALL)
+        output = re.sub(r'Thought:.*?Observation:', '', output, flags=re.DOTALL)
+        output = re.sub(r'Action:.*?Action Input:.*?Observation:', '', output, flags=re.DOTALL)
+
+        return output.strip()
 
     except Exception as e:
         logger.error(f"Error in call_agent: {str(e)}")

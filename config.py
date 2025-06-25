@@ -1,3 +1,4 @@
+import mlflow
 import requests
 import os
 import logging
@@ -8,18 +9,19 @@ logger = logging.getLogger(__name__)
 load_dotenv()
 
 DATABRICKS_URL = os.getenv('DATABRICKS_URL')
-DATABRICKS_API_TOKEN = os.getenv('DATABRICKS_API_TOKEN')
+DATABRICKS_TOKEN = os.getenv('DATABRICKS_API_TOKEN')
 DATABRICKS_MODEL_RAG_ENDPOINT = os.getenv('DATABRICKS_MODEL_RAG_ENDPOINT')
 DATABRICKS_MODEL_BASE_ENDPOINT = os.getenv('DATABRICKS_MODEL_BASE_ENDPOINT')
-DATABRICKS_API_UPLOAD_PATH = '/Volumes/workspace_team1/default/documents/landing'
+DATABRICKS_CATALOG = os.getenv('DATABRICKS_CATALOG')
+DATABRICKS_SCHEMA = os.getenv('DATABRICKS_SCHEMA')
+DATABRICKS_API_UPLOAD_PATH = F'/Volumes/{DATABRICKS_CATALOG}/{DATABRICKS_SCHEMA}/documents/landing'
 
 
 def get_warehouse_id():
-    """Fetch the first available warehouse ID"""
     try:
         response = requests.get(
             f"{DATABRICKS_URL}/api/2.0/sql/warehouses",
-            headers={'Authorization': f'Bearer {DATABRICKS_API_TOKEN}'}
+            headers={'Authorization': f'Bearer {DATABRICKS_TOKEN}'}
         )
         response.raise_for_status()
         warehouses = response.json().get('warehouses', [])

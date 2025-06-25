@@ -2,10 +2,9 @@ import streamlit as st
 import time
 import logging
 import fitz  # PyMuPDF
-
+import mlflow
 from agentic import call_agent
 from backend import submit_feedback, upload
-
 
 logger = logging.getLogger(__name__)
 
@@ -171,6 +170,8 @@ if __name__ == '__main__':
         st.session_state.messages = []
     if 'max_messages' not in st.session_state:
         st.session_state.max_messages = 20
+
+    mlflow.set_tracking_uri("databricks")
 
     feedback_section()
     upload_section()

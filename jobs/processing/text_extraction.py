@@ -30,16 +30,31 @@ def setup_tables():
     spark.sql("""
               CREATE TABLE IF NOT EXISTS document
               (
-                  id long PRIMARY KEY GENERATED ALWAYS AS IDENTITY,
-                  document_uuid STRING,
-                  upload_timestamp TIMESTAMP,
-                  page_count INT,
-                  word_count INT,
-                  created_at TIMESTAMP,
-                  expires_at TIMESTAMP,
-                  text STRING,
-                  file_name STRING,
-                  file_path STRING
+                  id
+                  long
+                  PRIMARY
+                  KEY
+                  GENERATED
+                  ALWAYS AS
+                  IDENTITY,
+                  document_uuid
+                  STRING,
+                  upload_timestamp
+                  TIMESTAMP,
+                  page_count
+                  INT,
+                  word_count
+                  INT,
+                  created_at
+                  TIMESTAMP,
+                  expires_at
+                  TIMESTAMP,
+                  text
+                  STRING,
+                  file_name
+                  STRING,
+                  file_path
+                  STRING
               )
                   USING DELTA
               """)
@@ -47,12 +62,23 @@ def setup_tables():
     spark.sql("""
               CREATE TABLE IF NOT EXISTS document_processing_error
               (
-                  id long PRIMARY KEY GENERATED ALWAYS AS IDENTITY,
-                  error_timestamp TIMESTAMP,
-                  file_name STRING,
-                  file_path STRING,
-                  error_message STRING,
-                  stack_trace STRING
+                  id
+                  long
+                  PRIMARY
+                  KEY
+                  GENERATED
+                  ALWAYS AS
+                  IDENTITY,
+                  error_timestamp
+                  TIMESTAMP,
+                  file_name
+                  STRING,
+                  file_path
+                  STRING,
+                  error_message
+                  STRING,
+                  stack_trace
+                  STRING
               )
                   USING DELTA
               """)
@@ -61,18 +87,43 @@ def setup_tables():
     spark.sql("""
               CREATE TABLE IF NOT EXISTS document_chunks_staging
               (
-                  id long PRIMARY KEY GENERATED ALWAYS AS IDENTITY,
-                  document_id LONG,
-                  chunk_index INT,
-                  chunk_text STRING,
-                  chunk_size INT,
-                  created_at TIMESTAMP,
-                  processed_for_embedding BOOLEAN,
-                  FOREIGN KEY ( document_id ) REFERENCES document ( id )
-              )
-                  USING DELTA TBLPROPERTIES
+                  id
+                  long
+                  PRIMARY
+                  KEY
+                  GENERATED
+                  ALWAYS AS
+                  IDENTITY,
+                  document_id
+                  LONG,
+                  chunk_index
+                  INT,
+                  chunk_text
+                  STRING,
+                  chunk_size
+                  INT,
+                  created_at
+                  TIMESTAMP,
+                  processed_for_embedding
+                  BOOLEAN,
+                  document_uri
+                  STRING,
+                  FOREIGN
+                  KEY
               (
-                  delta.enableChangeDataFeed = true
+                  document_id
+              ) REFERENCES document
+              (
+                  id
+              )
+                  )
+                  USING DELTA
+                  TBLPROPERTIES
+              (
+                  delta
+                  .
+                  enableChangeDataFeed =
+                  true
               );
               """)
 
@@ -139,7 +190,7 @@ def get_expiry_date():
     return datetime.now() + timedelta(hours=24)
 
 
-def chunk_document_text(text, document_id):
+def chunk_document_text(text, document_id, document_uri):
     """Chunk document text for later embedding"""
     try:
         chunks = text_splitter.split_text(text)
@@ -152,7 +203,8 @@ def chunk_document_text(text, document_id):
                 "chunk_text": chunk,
                 "chunk_size": len(chunk),
                 "created_at": datetime.now(),
-                "processed_for_embedding": False
+                "processed_for_embedding": True,
+                "document_uri": document_uri,
             })
 
         return chunk_data
@@ -175,6 +227,7 @@ def save_chunks_to_staging(chunks_data):
             StructField("chunk_size", IntegerType(), False),
             StructField("created_at", TimestampType(), False),
             StructField("processed_for_embedding", BooleanType(), False)
+            StructField("document_uri", StringType(), False)
         ])
 
         # Convert to rows
@@ -184,7 +237,8 @@ def save_chunks_to_staging(chunks_data):
             chunk["chunk_text"],
             chunk["chunk_size"],
             chunk["created_at"],
-            chunk["processed_for_embedding"]
+            chunk["processed_for_embedding"],
+            chunk["document_uri"],
         ) for chunk in chunks_data]
 
         # Create DataFrame and save
@@ -213,7 +267,7 @@ def get_document_id_from_uuid(document_uuid):
             raise Exception(f"Document with UUID {document_uuid} not found")
     except Exception as e:
         logger.error(f"Failed to get document ID: {str(e)}")
-        return None
+        return None, None
 
 
 def process_pdf_file(file_path):
@@ -267,7 +321,7 @@ def process_pdf_file(file_path):
         document_id = get_document_id_from_uuid(document_uuid)
 
         if document_id:
-            chunks_data = chunk_document_text(raw_text, document_id)
+            chunks_data = chunk_document_text(raw_text, document_id, file_path)
             save_chunks_to_staging(chunks_data)
 
             processing_time_sec = int((datetime.now() - start_time).total_seconds())

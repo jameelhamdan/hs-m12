@@ -17,7 +17,7 @@ def upload(file) -> str:
     response = requests.put(
         f"{config.DATABRICKS_URL}/api/2.0/fs/files/{volume_path}",
         headers={
-            'Authorization': f'Bearer {config.DATABRICKS_API_TOKEN}',
+            'Authorization': f'Bearer {config.DATABRICKS_TOKEN}',
         },
         data=file.getbuffer(),
     )
@@ -29,7 +29,7 @@ def run_sql(**kwargs):
         response = requests.post(
             f"{config.DATABRICKS_URL}/api/2.0/sql/statements/",
             headers={
-                'Authorization': f'Bearer {config.DATABRICKS_API_TOKEN}',
+                'Authorization': f'Bearer {config.DATABRICKS_TOKEN}',
                 'Content-Type': 'application/json',
             },
             json=dict(
