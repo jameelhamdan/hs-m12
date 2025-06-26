@@ -33,5 +33,9 @@ Tools available:
 
 def get_prompt(name: str) -> str:
     prompt_name = f'prompts:/{config.DATABRICKS_CATALOG}.{config.DATABRICKS_SCHEMA}.{name}@latest'
-    prompt = mlflow.genai.load_prompt(prompt_name)
-    return prompt.template
+    try:
+        prompt = mlflow.genai.load_prompt(prompt_name)
+        return prompt.template
+    except Exception as e:
+        logger.error(F'FAILED TO GET PROMPT {name}, USING FALLBACK', e, exc_info=e)
+        return PROMPT_DEFAULT_TEMPLATES[name]
