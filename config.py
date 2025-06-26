@@ -19,7 +19,7 @@ DATABRICKS_API_UPLOAD_PATH = F'/Volumes/{DATABRICKS_CATALOG}/{DATABRICKS_SCHEMA}
 
 def init():
     mlflow.set_tracking_uri("databricks")
-    mlflow.set_experiment(MLFLOW_EXPERIMENT_ID)
+    mlflow.set_experiment(experiment_id=MLFLOW_EXPERIMENT_ID)
     print('TRACKING_URL', mlflow.get_tracking_uri())
     print('DATABRICKS_URL', DATABRICKS_URL)
     print('DATABRICKS_API_UPLOAD_PATH', DATABRICKS_API_UPLOAD_PATH)
