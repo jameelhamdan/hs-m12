@@ -1,3 +1,6 @@
+import config
+config.init()
+
 import streamlit as st
 import time
 import logging

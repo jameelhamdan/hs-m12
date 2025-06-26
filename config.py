@@ -16,12 +16,14 @@ DATABRICKS_CATALOG = os.getenv('DATABRICKS_CATALOG')
 DATABRICKS_SCHEMA = os.getenv('DATABRICKS_SCHEMA')
 MLFLOW_EXPERIMENT_ID = os.getenv('MLFLOW_EXPERIMENT_ID')
 DATABRICKS_API_UPLOAD_PATH = F'/Volumes/{DATABRICKS_CATALOG}/{DATABRICKS_SCHEMA}/documents/landing'
-mlflow.set_tracking_uri("databricks")
 
-print('TRACKING_URL', mlflow.get_tracking_uri())
-print('DATABRICKS_URL', DATABRICKS_URL)
-print('DATABRICKS_API_UPLOAD_PATH', DATABRICKS_API_UPLOAD_PATH)
-print('MLFLOW_EXPERIMENT_ID', MLFLOW_EXPERIMENT_ID)
+def init():
+    mlflow.set_tracking_uri("databricks")
+    mlflow.set_experiment(MLFLOW_EXPERIMENT_ID)
+    print('TRACKING_URL', mlflow.get_tracking_uri())
+    print('DATABRICKS_URL', DATABRICKS_URL)
+    print('DATABRICKS_API_UPLOAD_PATH', DATABRICKS_API_UPLOAD_PATH)
+    print('MLFLOW_EXPERIMENT_ID', MLFLOW_EXPERIMENT_ID)
 
 def get_warehouse_id():
     try:

@@ -32,8 +32,6 @@ Tools available:
 }
 
 def get_prompt(name: str) -> str:
-    return PROMPT_DEFAULT_TEMPLATES[name]
-
     prompt_name = f'prompts:/{config.DATABRICKS_CATALOG}.{config.DATABRICKS_SCHEMA}.{name}@latest'
     try:
         prompt = mlflow.genai.load_prompt(prompt_name)
