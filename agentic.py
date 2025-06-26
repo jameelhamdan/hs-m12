@@ -6,7 +6,7 @@ from langchain_core.messages import AIMessage, HumanMessage
 from databricks_langchain.chat_models import ChatDatabricks
 from prompts import get_prompt
 import logging
-
+from typing import List, Dict, Any, Optional
 
 logger = logging.getLogger(__name__)
 
@@ -27,142 +27,286 @@ chat_rag_model = ChatDatabricks(
     temperature=0.1
 )
 
-def retrieve_document(text: str) -> str:
-    """Summarize text in the specified language"""
-    try:
-        prompt = get_prompt('retrieve_document').format(text=text)
-        response = chat_rag_model.invoke(prompt)
-        return response.content
-    except Exception as e:
-        logger.error(f"Error summarizing text: {str(e)}")
-        return f"Error generating summary: {str(e)}"
 
+# Define specialized agents
+class DocumentRetrievalAgent:
+    """Agent specialized in document retrieval tasks"""
 
-def summarize_text(text: str) -> str:
-    """Summarize text in the specified language"""
-    try:
-        prompt = get_prompt('summarize_text').format(text=text)
-        response = chat_base_model.invoke(prompt)
-        return response.content
-    except Exception as e:
-        logger.error(f"Error summarizing text: {str(e)}")
-        return f"Error generating summary: {str(e)}"
+    def __init__(self):
+        self.tools = [
+            Tool(
+                name="RetrieveDocument",
+                func=self.retrieve_document,
+                description='Search and retrieve documents by text search',
+            )
+        ]
+        self.agent = self._create_agent()
 
+    def retrieve_document(self, text: str) -> str:
+        """Retrieve documents based on text search"""
+        try:
+            prompt = get_prompt('retrieve_document').format(text=text)
+            response = chat_rag_model.invoke(prompt)
+            return response.content
+        except Exception as e:
+            logger.error(f"Error retrieving documents: {str(e)}")
+            return f"Error retrieving documents: {str(e)}"
 
-def translate_text(text: str, target_language: str = None) -> str:
-    """Translate text to the target language"""
-    try:
-        prompt = get_prompt('translate_text').format(
-            text=text,
-            target_language=target_language
+    def _create_agent(self):
+        prompt = get_prompt("document_retrieval_agent_prompt")
+        agent_prompt = ChatPromptTemplate.from_messages([
+            ("system", prompt),
+            MessagesPlaceholder("chat_history", optional=True),
+            ("human", "{input}"),
+            MessagesPlaceholder("agent_scratchpad"),
+        ])
+
+        return create_tool_calling_agent(
+            llm=chat_rag_model,
+            tools=self.tools,
+            prompt=agent_prompt,
         )
-        response = chat_base_model.invoke(prompt)
-        return response.content
-    except Exception as e:
-        logger.error(f"Error translating text: {str(e)}")
-        return f"Error translating text: {str(e)}"
+
+    def run(self, input: Dict[str, Any]) -> str:
+        executor = AgentExecutor(
+            agent=self.agent,
+            tools=self.tools,
+            verbose=True,
+            handle_parsing_errors=True,
+        )
+        response = executor.invoke(input)
+        return response.get("output", "No response generated")
 
 
-def summarize_and_translate(text: str, target_language: str = None) -> str:
-    """Summarize and then translate the text"""
-    try:
-        summary = summarize_text(text)
-        return translate_text(summary, target_language)
-    except Exception as e:
-        logger.error(f"Error in summarize_and_translate: {str(e)}")
-        return f"Error in summarize_and_translate: {str(e)}"
+class SummarizationAgent:
+    """Agent specialized in text summarization tasks"""
+
+    def __init__(self):
+        self.tools = [
+            Tool(
+                name="Summarize",
+                func=self.summarize_text,
+                description='Summarize text in various languages',
+            ),
+            Tool(
+                name="SummarizeAndTranslate",
+                func=self.summarize_and_translate,
+                description='Summarize and translate text',
+            )
+        ]
+        self.agent = self._create_agent()
+
+    def summarize_text(self, text: str) -> str:
+        """Summarize text"""
+        try:
+            prompt = get_prompt('summarize_text').format(text=text)
+            response = chat_base_model.invoke(prompt)
+            return response.content
+        except Exception as e:
+            logger.error(f"Error summarizing text: {str(e)}")
+            return f"Error generating summary: {str(e)}"
+
+    def summarize_and_translate(self, text: str, target_language: str) -> str:
+        """Summarize and translate text"""
+        try:
+            summary = self.summarize_text(text)
+            return TranslationAgent().run({
+                "input": f"Translate this to {target_language}: {summary}",
+                "chat_history": []
+            })
+        except Exception as e:
+            logger.error(f"Error in summarize_and_translate: {str(e)}")
+            return f"Error in summarize_and_translate: {str(e)}"
+
+    def _create_agent(self):
+        prompt = get_prompt("summarization_agent_prompt")
+        agent_prompt = ChatPromptTemplate.from_messages([
+            ("system", prompt),
+            MessagesPlaceholder("chat_history", optional=True),
+            ("human", "{input}"),
+            MessagesPlaceholder("agent_scratchpad"),
+        ])
+
+        return create_tool_calling_agent(
+            llm=chat_base_model,
+            tools=self.tools,
+            prompt=agent_prompt,
+        )
+
+    def run(self, input: Dict[str, Any]) -> str:
+        executor = AgentExecutor(
+            agent=self.agent,
+            tools=self.tools,
+            verbose=True,
+            handle_parsing_errors=True,
+        )
+        response = executor.invoke(input)
+        return response.get("output", "No response generated")
 
 
-# Define tools with proper parameter schemas
-tools = [
-    Tool(
-        name="RetrieveDocument",
-        func=retrieve_document,
-        description='Useful for searching and retrieving documents by text search',
-        args_schema={
-            "type": "object",
-            "properties": {
-                "text": {"type": "string", "description": "The text to search for documents with"}
-            },
-            "required": ["text"]
+class TranslationAgent:
+    """Agent specialized in translation tasks"""
+
+    def __init__(self):
+        self.tools = [
+            Tool(
+                name="Translate",
+                func=self.translate_text,
+                description='Translate text to different languages',
+            )
+        ]
+        self.agent = self._create_agent()
+
+    def translate_text(self, text: str, target_language: str) -> str:
+        """Translate text to target language"""
+        try:
+            prompt = get_prompt('translate_text').format(
+                text=text,
+                target_language=target_language
+            )
+            response = chat_base_model.invoke(prompt)
+            return response.content
+        except Exception as e:
+            logger.error(f"Error translating text: {str(e)}")
+            return f"Error translating text: {str(e)}"
+
+    def _create_agent(self):
+        prompt = get_prompt("translation_agent_prompt")
+        agent_prompt = ChatPromptTemplate.from_messages([
+            ("system", prompt),
+            MessagesPlaceholder("chat_history", optional=True),
+            ("human", "{input}"),
+            MessagesPlaceholder("agent_scratchpad"),
+        ])
+
+        return create_tool_calling_agent(
+            llm=chat_base_model,
+            tools=self.tools,
+            prompt=agent_prompt,
+        )
+
+    def run(self, input: Dict[str, Any]) -> str:
+        executor = AgentExecutor(
+            agent=self.agent,
+            tools=self.tools,
+            verbose=True,
+            handle_parsing_errors=True,
+        )
+        response = executor.invoke(input)
+        return response.get("output", "No response generated")
+
+
+from langchain_core.tools import tool
+from typing import Dict, Any
+
+
+class OrchestratorAgent:
+    """Main agent that routes tasks to specialized agents"""
+
+    def __init__(self):
+        self.agents = {
+            "document": DocumentRetrievalAgent(),
+            "summarization": SummarizationAgent(),
+            "translation": TranslationAgent()
         }
-    ),
-    Tool(
-        name="Summarize",
-        func=summarize_text,
-        description='Useful for summarizing text in various languages.',
-        args_schema={
-            "type": "object",
-            "properties": {
-                "text": {"type": "string", "description": "The text to summarize"}
-            },
-            "required": ["text"]
-        }
-    ),
-    Tool(
-        name="Translate",
-        func=translate_text,
-        description='Useful for translating text to different languages.',
-        args_schema={
-            "type": "object",
-            "properties": {
-                "text": {"type": "string", "description": "The text to translate"},
-                "target_language": {"type": "string", "description": "Target language code"}
-            },
-            "required": ["text", "target_language"]
-        }
-    ),
-    Tool(
-        name="SummarizeAndTranslate",
-        func=summarize_and_translate,
-        description='Useful for first summarizing and then translating text.',
-        args_schema={
-            "type": "object",
-            "properties": {
-                "text": {"type": "string", "description": "The text to process"},
-                "target_language": {"type": "string", "description": "Target language code"}
-            },
-            "required": ["text", "target_language"]
-        }
-    ),
-]
 
-# Initialize the agent (will be done after prompts are loaded)
-agent_executor = None
+        # Define tools with proper schemas
+        self.tools = [
+            self._create_document_tool(),
+            self._create_summarization_tool(),
+            self._create_translation_tool()
+        ]
+
+        self.agent = self._create_orchestrator()
+
+    def _create_document_tool(self):
+        @tool
+        def document_retrieval(query: str) -> str:
+            """Search for and retrieve documents based on a query"""
+            return self._call_document_agent(query)
+
+        return document_retrieval
+
+    def _create_summarization_tool(self):
+        @tool
+        def text_summarization(query: str) -> str:
+            """Summarize text or summarize and translate text"""
+            return self._call_summarization_agent(query)
+
+        return text_summarization
+
+    def _create_translation_tool(self):
+        @tool
+        def text_translation(query: str) -> str:
+            """Translate text to another language"""
+            return self._call_translation_agent(query)
+
+        return text_translation
+
+    def _create_orchestrator(self):
+        prompt = get_prompt("orchestrator_agent_prompt")
+        agent_prompt = ChatPromptTemplate.from_messages([
+            ("system", prompt),
+            MessagesPlaceholder("chat_history", optional=True),
+            ("human", "{input}"),
+            MessagesPlaceholder("agent_scratchpad"),
+        ])
+
+        return create_tool_calling_agent(
+            llm=chat_rag_model,
+            tools=self.tools,
+            prompt=agent_prompt,
+        )
+
+    def _call_document_agent(self, query: str) -> str:
+        """Route document-related tasks to document agent"""
+        return self.agents["document"].run({
+            "input": query,
+            "chat_history": []
+        })
+
+    def _call_summarization_agent(self, query: str) -> str:
+        """Route summarization tasks to summarization agent"""
+        return self.agents["summarization"].run({
+            "input": query,
+            "chat_history": []
+        })
+
+    def _call_translation_agent(self, query: str) -> str:
+        """Route translation tasks to translation agent"""
+        return self.agents["translation"].run({
+            "input": query,
+            "chat_history": []
+        })
+
+    def run(self, input: Dict[str, Any]) -> str:
+        executor = AgentExecutor(
+            agent=self.agent,
+            tools=self.tools,
+            verbose=True,
+            handle_parsing_errors=True,
+        )
+        response = executor.invoke(input)
+        return self._clean_response(response.get("output", "No response generated"))
+
+    def _clean_response(self, output: str) -> str:
+        """Clean up agent response"""
+        output = re.sub(r'<think>.*?</think>', '', output, flags=re.DOTALL)
+        output = re.sub(r'Thought:.*?Observation:', '', output, flags=re.DOTALL)
+        output = re.sub(r'Action:.*?Action Input:.*?Observation:', '', output, flags=re.DOTALL)
+        return output.strip()
 
 
-def initialize_agent():
-    """Initialize the agent after prompts are loaded"""
-    global agent_executor
-    prompt = get_prompt("agent_system_prompt")
-
-    # Define the prompt template for the tool calling agent
-    agent_prompt = ChatPromptTemplate.from_messages([
-        ("system", prompt),
-        MessagesPlaceholder("chat_history", optional=True),
-        ("human", "{input}"),
-        MessagesPlaceholder("agent_scratchpad"),
-    ])
-
-    # Create the tool calling agent
-    agent = create_tool_calling_agent(
-        llm=chat_rag_model,
-        tools=tools,
-        prompt=agent_prompt,
-    )
-
-    agent_executor = AgentExecutor(
-        agent=agent,
-        tools=tools,
-        verbose=True,
-        handle_parsing_errors=True,
-        return_intermediate_steps=False,
-    )
+orchestrator = OrchestratorAgent()
 
 
-def call_agent(prompt: str, current_documents: list[str] = None, chat_history: list[tuple[str, str]] = None) -> str:
+def call_agent(
+        prompt: str,
+        current_documents: Optional[List[str]] = None,
+        chat_history: Optional[List[tuple[str, str]]] = None
+) -> str:
     """
-    Execute the agent with the given prompt, documents, and chat history
+    Execute the multi-agent system with the given prompt, documents, and chat history
 
     Args:
         prompt: The user's input prompt
@@ -173,9 +317,6 @@ def call_agent(prompt: str, current_documents: list[str] = None, chat_history: l
         The agent's response
     """
     try:
-        if agent_executor is None:
-            initialize_agent()
-
         # Format chat history for LangChain
         formatted_history = []
         if chat_history:
@@ -190,16 +331,12 @@ def call_agent(prompt: str, current_documents: list[str] = None, chat_history: l
             docs_context = "\n\n".join([f"Document {i + 1}:\n{doc}" for i, doc in enumerate(current_documents)])
             input_with_context = f"Context documents:\n{docs_context}\n\nUser question: {prompt}"
 
-        response = agent_executor.invoke({
+        response = orchestrator.run({
             "input": input_with_context,
             "chat_history": formatted_history,
         })
-        output = response.get("output", "No response generated")
-        output = re.sub(r'<think>.*?</think>', '', output, flags=re.DOTALL)
-        output = re.sub(r'Thought:.*?Observation:', '', output, flags=re.DOTALL)
-        output = re.sub(r'Action:.*?Action Input:.*?Observation:', '', output, flags=re.DOTALL)
 
-        return output.strip()
+        return response
 
     except Exception as e:
         logger.error(f"Error in call_agent: {str(e)}")
