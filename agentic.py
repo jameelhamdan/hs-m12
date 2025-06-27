@@ -62,7 +62,7 @@ class DocumentRetrievalAgent:
         ])
 
         return create_tool_calling_agent(
-            llm=chat_rag_model,
+            llm=chat_base_model,
             tools=self.tools,
             prompt=agent_prompt,
         )
@@ -253,7 +253,7 @@ class OrchestratorAgent:
         ])
 
         return create_tool_calling_agent(
-            llm=chat_rag_model,
+            llm=chat_base_model,
             tools=self.tools,
             prompt=agent_prompt,
         )
@@ -319,6 +319,14 @@ def call_agent(
     try:
         # Format chat history for LangChain
         formatted_history = []
+
+        if current_documents:
+            docs_context = "\n\n".join([f"Document {i + 1}:\n{doc}" for i, doc in enumerate(current_documents)])
+            formatted_history.extend([
+                HumanMessage(content=f"Answer questions based on these Context documents:\n{docs_context}\n"),
+                AIMessage(content='Context Documents Acknowledged.'),
+            ])
+
         if chat_history:
             for human_msg, ai_msg in chat_history:
                 formatted_history.extend([
@@ -326,13 +334,8 @@ def call_agent(
                     AIMessage(content=ai_msg)
                 ])
 
-        input_with_context = prompt
-        if current_documents:
-            docs_context = "\n\n".join([f"Document {i + 1}:\n{doc}" for i, doc in enumerate(current_documents)])
-            input_with_context = f"Context documents:\n{docs_context}\n\nUser question: {prompt}"
-
         response = orchestrator.run({
-            "input": input_with_context,
+            "input": prompt,
             "chat_history": formatted_history,
         })
 
