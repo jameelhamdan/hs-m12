@@ -87,11 +87,6 @@ class SummarizationAgent:
                 name="Summarize",
                 func=self.summarize_text,
                 description='Summarize text in various languages',
-            ),
-            Tool(
-                name="SummarizeAndTranslate",
-                func=self.summarize_and_translate,
-                description='Summarize and translate text',
             )
         ]
         self.agent = self._create_agent()
@@ -105,18 +100,6 @@ class SummarizationAgent:
         except Exception as e:
             logger.error(f"Error summarizing text: {str(e)}")
             return f"Error generating summary: {str(e)}"
-
-    def summarize_and_translate(self, text: str, target_language: str) -> str:
-        """Summarize and translate text"""
-        try:
-            summary = self.summarize_text(text)
-            return TranslationAgent().run({
-                "input": f"Translate this to {target_language}: {summary}",
-                "chat_history": []
-            })
-        except Exception as e:
-            logger.error(f"Error in summarize_and_translate: {str(e)}")
-            return f"Error in summarize_and_translate: {str(e)}"
 
     def _create_agent(self):
         prompt = get_prompt("summarization_agent_prompt")
@@ -157,7 +140,7 @@ class TranslationAgent:
         ]
         self.agent = self._create_agent()
 
-    def translate_text(self, text: str, target_language: str) -> str:
+    def translate_text(self, text: str, target_language: str = None) -> str:
         """Translate text to target language"""
         try:
             prompt = get_prompt('translate_text').format(

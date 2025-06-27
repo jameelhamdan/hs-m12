@@ -68,7 +68,6 @@ Guidelines:
 
 You have access to the following tools:
 - Summarize: Create a summary of the provided text
-- SummarizeAndTranslate: Summarize then translate the text
 
 Current conversation:
 {chat_history}
@@ -104,7 +103,7 @@ Current conversation:
 {chat_history}
 
 User request: {input}""",
-    "translate_text": """Translate the following text to {target_language}. 
+    "translate_text": """Translate the following text to {target_language} or language from user prompt context. 
 Preserve the original meaning, tone, and style as much as possible.
 
 Text to translate:
